@@ -1,0 +1,28 @@
+name: probe-hosts8
+on:
+  push:
+    branches: [ 'probe/**' ]
+  workflow_dispatch:
+jobs:
+  recon:
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: ubuntu-latest
+            full: "1"
+          - os: macos-latest
+            full: "0"
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.x'
+      - name: egress + hosts8 recon
+        env:
+          FULL: ${{ matrix.full }}
+        run: |
+          echo "runner=$RUNNER_NAME os=$RUNNER_OS arch=$RUNNER_ARCH"
+          python3 net_egress8.py
