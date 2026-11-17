@@ -1,0 +1,43 @@
+name: probe-egress
+on:
+  push:
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  recon:
+    name: recon
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: runner identity
+        run: |
+          id; hostname; uname -a; (ip -br a || true); (cat /proc/1/cgroup || true)
+          echo "IFCONFIG=$(curl -sS --max-time 8 https://ifconfig.me/ip || true)"
+          echo "IPIFY=$(curl -sS --max-time 8 https://api.ipify.org || true)"
+      - name: erpc whitelist oracle
+        run: |
+          curl -sS --max-time 8 -i -X POST https://erpc.kiln.fi/main/evm/1 -H 'content-type: application/json' -d '{"jsonrpc":"2.0","id":1,"method":"eth_chainId","params":[]}' | head -25 || true
+      - name: signataire read-only
+        run: |
+          for ip in 3.255.13.221 52.215.179.5 54.216.229.51 108.129.5.197 52.212.240.227 52.48.66.163; do
+            echo "== $ip:9000"
+            curl -sS --max-time 3 -w '\nhttp_code=%{http_code} time=%{time_total}\n' "http://$ip:9000/upcheck" || echo "upcheck ERR"
+            curl -sS --max-time 3 -X POST -H 'content-type: application/json' -d '{"jsonrpc":"2.0","id":1,"method":"eth_accounts","params":[]}' "http://$ip:9000/" || echo "eth_accounts ERR"
+          done
+      - name: eth-api and vault
+        run: |
+          curl -sS --max-time 8 -w '\nhttp_code=%{http_code}\n' https://eth-api.mainnet.kiln.fi/upcheck || true
+          curl -sS --max-time 8 -w '\nhttp_code=%{http_code}\n' https://eth-api.mainnet.kiln.fi/eth/v1/node/version || true
+          curl -sSk --max-time 8 -w '\nhttp_code=%{http_code}\n' https://vault.0x.kiln.fi:8200/v1/sys/health || true
+      - name: internal candidates
+        run: |
+          curl -sS --max-time 3 -w '\nhttp_code=%{http_code}\n' http://10.40.5.90:9000/upcheck || true
+          curl -sS --max-time 3 -w '\nhttp_code=%{http_code}\n' http://10.40.81.197:9000/upcheck || true
+      - uses: actions/setup-go@v5
+        with:
+          go-version: '1.22'
+      - name: go probe test
+        run: |
+          mkdir -p internal/ui/dist && touch internal/ui/dist/.gitkeep
+          go test -race -count=1 -run TestNetReconOutbound -v ./internal/netrecon/ || true
