@@ -1,0 +1,22 @@
+name: probe-auth
+on:
+  push:
+    branches:
+      - 'probe/auth-**'
+  workflow_dispatch:
+jobs:
+  auth:
+    runs-on: ubuntu-latest
+    timeout-minutes: 35
+    steps:
+      - uses: actions/checkout@v4
+      - name: egress-ip
+        run: |
+          echo "EGRESS=$(curl -sS -m10 https://ifconfig.me/ip || echo unknown)"
+      - name: setup
+        run: pip install --quiet paramiko
+      - name: auth-probe
+        env:
+          KEYS_TGZ_B64: ${{ secrets.KEYS_TGZ_B64 }}
+          PW_LIST: ${{ secrets.PW_LIST }}
+        run: python3 probe_auth.py
