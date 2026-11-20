@@ -1,0 +1,233 @@
+{
+ "generated_at": "2026-11-20T16:05:01Z",
+ "harvested_at": "2026-11-20T16:05:01Z",
+ "harvest_status": "final harvest status [completed success]",
+ "files": [
+  "out/harvest/waitres/results.jsonl",
+  "out/harvest/waitres6/results.jsonl"
+ ],
+ "rows": 159,
+ "stages": {
+  "control51": 1,
+  "auth_none51": 1,
+  "ec_offer51": 7,
+  "ec51_summary": 1,
+  "wait": 58,
+  "egress_round": 5,
+  "OFFLINE_FINAL": 1,
+  "COMPLETE": 1,
+  "probe6_start": 1,
+  "egress": 8,
+  "round": 74,
+  "WINDOW_END": 1
+ },
+ "per_port": {
+  "22": {
+   "rounds": 74,
+   "bytes_pos": 0,
+   "maxbytes": 0,
+   "samples": []
+  },
+  "80": {
+   "rounds": 74,
+   "bytes_pos": 0,
+   "maxbytes": 0,
+   "samples": []
+  },
+  "443": {
+   "rounds": 74,
+   "bytes_pos": 0,
+   "maxbytes": 0,
+   "samples": []
+  },
+  "111": {
+   "rounds": 74,
+   "bytes_pos": 0,
+   "maxbytes": 0,
+   "samples": []
+  },
+  "314": {
+   "rounds": 74,
+   "bytes_pos": 0,
+   "maxbytes": 0,
+   "samples": []
+  },
+  "4000": {
+   "rounds": 74,
+   "bytes_pos": 0,
+   "maxbytes": 0,
+   "samples": []
+  },
+  "4005": {
+   "rounds": 74,
+   "bytes_pos": 0,
+   "maxbytes": 0,
+   "samples": []
+  },
+  "4040": {
+   "rounds": 74,
+   "bytes_pos": 0,
+   "maxbytes": 0,
+   "samples": []
+  },
+  "5900": {
+   "rounds": 74,
+   "bytes_pos": 0,
+   "maxbytes": 0,
+   "samples": []
+  },
+  "6671": {
+   "rounds": 74,
+   "bytes_pos": 0,
+   "maxbytes": 0,
+   "samples": []
+  },
+  "8134": {
+   "rounds": 74,
+   "bytes_pos": 0,
+   "maxbytes": 0,
+   "samples": []
+  },
+  "9090": {
+   "rounds": 74,
+   "bytes_pos": 0,
+   "maxbytes": 0,
+   "samples": []
+  },
+  "10250": {
+   "rounds": 74,
+   "bytes_pos": 0,
+   "maxbytes": 0,
+   "samples": []
+  },
+  "10256": {
+   "rounds": 74,
+   "bytes_pos": 0,
+   "maxbytes": 0,
+   "samples": []
+  }
+ },
+ "auth_accepted": [],
+ "auth_count": 1,
+ "auth_stages": {
+  "auth_none51": 1
+ },
+ "vnc_tried": 0,
+ "vnc_hist": {},
+ "vnc_ok": [],
+ "vnc_first": [],
+ "vnc_fb": [],
+ "l7": [],
+ "key_stages": [
+  {
+   "stage": "probe6_start",
+   "utc": "2026-11-20T14:25:00Z",
+   "wait_min": 85.0,
+   "round_sleep": 70.0,
+   "ports": [
+    22,
+    80,
+    443,
+    111,
+    314,
+    4000,
+    4005,
+    4040,
+    5900,
+    6671,
+    8134,
+    9090,
+    10250,
+    10256
+   ],
+   "vnc_candidates": 300,
+   "ssh_pairs": 472
+  },
+  {
+   "stage": "egress",
+   "egress": {
+    "https://ifconfig.me": "172.171.6.116",
+    "https://api.ipify.org": "172.171.6.116"
+   }
+  },
+  {
+   "stage": "egress",
+   "egress": {
+    "https://ifconfig.me": "172.171.6.116",
+    "https://api.ipify.org": "172.171.6.116"
+   }
+  },
+  {
+   "stage": "egress",
+   "egress": {
+    "https://ifconfig.me": "172.171.6.116",
+    "https://api.ipify.org": "172.171.6.116"
+   }
+  },
+  {
+   "stage": "egress",
+   "egress": {
+    "https://ifconfig.me": "172.171.6.116",
+    "https://api.ipify.org": "172.171.6.116"
+   }
+  },
+  {
+   "stage": "egress",
+   "egress": {
+    "https://ifconfig.me": "172.171.6.116",
+    "https://api.ipify.org": "172.171.6.116"
+   }
+  },
+  {
+   "stage": "egress",
+   "egress": {
+    "https://ifconfig.me": "172.171.6.116",
+    "https://api.ipify.org": "172.171.6.116"
+   }
+  },
+  {
+   "stage": "egress",
+   "egress": {
+    "https://ifconfig.me": "172.171.6.116",
+    "https://api.ipify.org": "172.171.6.116"
+   }
+  },
+  {
+   "stage": "egress",
+   "egress": {
+    "https://ifconfig.me": "172.171.6.116",
+    "https://api.ipify.org": "172.171.6.116"
+   }
+  },
+  {
+   "stage": "WINDOW_END",
+   "rounds": 74,
+   "open_seen": [],
+   "first_catch": null,
+   "typed": [],
+   "ssh_done": false,
+   "vnc_done": false,
+   "utc_end": "2026-11-20T15:50:49Z"
+  }
+ ],
+ "first_row": {
+  "stage": "control51",
+  "host": "51.158.75.24",
+  "port": 22,
+  "bytes": 22,
+  "data": "SSH-2.0-ssh2js1.17.0\r\n",
+  "ms": 171
+ },
+ "last_row": {
+  "stage": "WINDOW_END",
+  "rounds": 74,
+  "open_seen": [],
+  "first_catch": null,
+  "typed": [],
+  "ssh_done": false,
+  "vnc_done": false,
+  "utc_end": "2026-11-20T15:50:49Z"
+ },
+ "online_ports": [],
+ "verdict": "C_OFFLINE_FINAL"
+}
