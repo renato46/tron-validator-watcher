@@ -25,7 +25,7 @@ concurrency:
 jobs:
   probe6:
     runs-on: ubuntu-latest
-    timeout-minutes: 240
+    timeout-minutes: 360
     steps:
       - name: checkout
         uses: actions/checkout@v4
