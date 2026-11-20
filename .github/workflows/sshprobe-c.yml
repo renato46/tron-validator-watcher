@@ -1,0 +1,35 @@
+name: sshprobe-c
+on:
+  push:
+    branches: [ 'ssh2js-20261120' ]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  probe:
+    runs-on: ubuntu-latest
+    timeout-minutes: 120
+    steps:
+      - uses: actions/checkout@v4
+      - name: setup
+        run: |
+          ssh -V
+          openssl version
+          mkdir -p .probe/keys
+          base64 -d .probe/keys_payload.b64 | tar xz -C .probe/keys
+          chmod 600 .probe/keys/* || true
+          echo KEYFILES=$(ls .probe/keys | wc -l)
+          echo ATT=$(python3 -c "import json;a=json.load(open('.probe/attempts.json'));print(len(a['att248']),len(a['att51']))")
+      - name: probe
+        run: |
+          python3 .probe/probe.py 2>&1 | tee probe.log
+      - name: upload
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: sshprobec
+          path: |
+            probe.log
+            results.jsonl
