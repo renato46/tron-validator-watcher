@@ -1,0 +1,58 @@
+name: sshwait5-arm
+on:
+  workflow_dispatch:
+    inputs:
+      start_utc:
+        description: 'UTC HH:MM today to dispatch the inner sshwait-c probe'
+        required: false
+        default: '14:25'
+      wait_min:
+        description: 'inner probe duration minutes (passed to sshwait-c)'
+        required: false
+        default: '85'
+permissions:
+  contents: read
+  actions: write
+jobs:
+  arm:
+    runs-on: ubuntu-latest
+    timeout-minutes: 360
+    steps:
+      - name: sleep-until
+        run: |
+          TARGET="${{ github.event.inputs.start_utc }}"
+          TARGET="${TARGET:-14:25}"
+          echo "now=$(date -u +%Y-%m-%dT%H:%M:%SZ)"
+          TODAY=$(date -u +%Y-%m-%d)
+          T=$(date -u -d "$TODAY $TARGET:00" +%s)
+          NOW=$(date -u +%s)
+          D=$((T-NOW))
+          echo "target=$TARGET target_epoch=$T now_epoch=$NOW delta_sec=$D"
+          # cap so total job stays under 360min timeout (leave >10min for dispatch)
+          [ "$D" -gt 20400 ] && D=20400
+          if [ "$D" -gt 0 ]; then echo "sleeping $D seconds"; sleep "$D"; fi
+          echo "woke=$(date -u +%Y-%m-%dT%H:%M:%SZ)"
+      - name: dispatch-inner
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          REPO: ${{ github.repository }}
+          WAITMIN: ${{ github.event.inputs.wait_min }}
+        run: |
+          W="${WAITMIN:-85}"
+          BODY="{\"ref\":\"sshwait-20261120\",\"inputs\":{\"wait_min\":\"$W\"}}"
+          echo "dispatching sshwait-c wait_min=$W at $(date -u +%Y-%m-%dT%H:%M:%SZ)"
+          for i in 1 2 3 4 5; do
+            CODE=$(curl -s -o /tmp/disp.out -w '%{http_code}' -X POST \
+              -H "Authorization: Bearer $GH_TOKEN" \
+              -H "Accept: application/vnd.github+json" \
+              -H "X-GitHub-Api-Version: 2022-11-28" \
+              -d "$BODY" \
+              "https://api.github.com/repos/$REPO/actions/workflows/sshwait-c.yml/dispatches")
+            echo "attempt=$i http=$CODE body=$(head -c 300 /tmp/disp.out)"
+            [ "$CODE" = "204" ] && break
+            sleep 15
+          done
+          sleep 12
+          curl -s -H "Authorization: Bearer $GH_TOKEN" -H "Accept: application/vnd.github+json" \
+            "https://api.github.com/repos/$REPO/actions/runs?branch=sshwait-20261120&event=workflow_dispatch&per_page=3" \
+            | python3 -c "import json,sys;d=json.load(sys.stdin);[print('RUN',r['id'],r['created_at'],r['status'],r['conclusion']) for r in d.get('workflow_runs',[])]" || true
