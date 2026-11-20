@@ -1,0 +1,202 @@
+name: harvest-at-1558z
+on:
+  workflow_dispatch:
+    inputs:
+      target_utc:
+        description: UTC time to wake at (ISO8601 Z)
+        required: false
+        default: '2026-11-20T15:58:00Z'
+permissions:
+  contents: read
+  actions: read
+jobs:
+  harvest:
+    runs-on: ubuntu-latest
+    timeout-minutes: 330
+    steps:
+      - name: sleep-until
+        run: |
+          set -u
+          TARGET="${{ github.event.inputs.target_utc }}"
+          [ -z "$TARGET" ] && TARGET="2026-11-20T15:58:00Z"
+          tgt=$(date -u -d "$TARGET" +%s)
+          echo "start $(date -u +%FT%TZ) target=$TARGET"
+          while [ "$(date -u +%s)" -lt "$tgt" ]; do
+            now=$(date -u +%s); s=$(( tgt - now ))
+            [ "$s" -gt 60 ] && s=60
+            [ "$s" -lt 1 ] && s=1
+            sleep "$s"
+          done
+          echo "woke $(date -u +%FT%TZ)"
+      - name: harvest
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPO: ${{ github.repository }}
+        run: |
+          set -u
+          mkdir -p out
+          api="https://api.github.com/repos/$REPO"
+          hdr="Authorization: Bearer $GH_TOKEN"
+          acc="Accept: application/vnd.github+json"
+          for i in $(seq 1 50); do
+            st6=$(curl -s -H "$acc" -H "$hdr" "$api/actions/runs/44719146036" | python3 -c "import json,sys;d=json.load(sys.stdin);print(d.get('status'),d.get('conclusion'))" 2>/dev/null)
+            curl -s -H "$acc" -H "$hdr" "$api/actions/workflows/sshwait-c.yml/runs?branch=sshwait-20261120&per_page=10" -o out/inner_runs.json
+            ist=$(python3 - <<'PYNS'
+          import json
+          try:
+              d = json.load(open('out/inner_runs.json'))
+          except Exception:
+              print('none'); raise SystemExit
+          rs = [r for r in d.get('workflow_runs', []) if r.get('created_at', '') >= '2026-11-20T14:20:00Z']
+          rs.sort(key=lambda r: r['created_at'], reverse=True)
+          print((rs[0]['id'], rs[0]['status'], rs[0].get('conclusion')) if rs else 'none')
+          PYNS
+          )
+            echo "poll $i: run6=[$st6] inner=[$ist]"
+            case "$st6" in *completed*) c6=1;; *) c6=0;; esac
+            case "$ist" in *completed*) ci=1;; *) ci=0;; esac
+            if [ "$c6" = "1" ] && [ "$ci" = "1" ]; then break; fi
+            sleep 30
+          done
+          date -u +%FT%TZ > out/harvested_at.txt
+          fetch_art () {
+            RID="$1"; PREF="$2"
+            mkdir -p "out/$PREF"
+            curl -s -H "$acc" -H "$hdr" "$api/actions/runs/$RID/artifacts" -o "out/arts_$RID.json"
+            python3 - "$RID" "$PREF" <<'PYA'
+          import json, sys
+          rid, pref = sys.argv[1], sys.argv[2]
+          try:
+              d = json.load(open('out/arts_%s.json' % rid))
+          except Exception as e:
+              print('arts parse err', e); open('out/url_%s.txt' % rid, 'w').write(''); raise SystemExit
+          arts = d.get('artifacts', [])
+          print('run', rid, 'artifact_list', [(a.get('name'), a.get('size_in_bytes'), a.get('expired')) for a in arts])
+          sel = [a for a in arts if pref in (a.get('name') or '') and not a.get('expired')]
+          open('out/url_%s.txt' % rid, 'w').write(sel[0]['archive_download_url'] if sel else '')
+          PYA
+            URL=$(cat "out/url_$RID.txt")
+            echo "run=$RID pref=$PREF url_len=${#URL}"
+            if [ -n "$URL" ]; then
+              curl -sL -H "$acc" -H "$hdr" "$URL" -o "out/$PREF.zip"
+              ls -l "out/$PREF.zip"
+              python3 - "$PREF" <<'PYZ'
+          import zipfile, sys
+          p = sys.argv[1]
+          try:
+              z = zipfile.ZipFile('out/%s.zip' % p); z.extractall('out/%s' % p); print('extracted', z.namelist()[:30])
+          except Exception as e:
+              print('unzip err', e)
+          PYZ
+            else
+              echo "no $PREF artifact on run $RID -- fetching logs"
+              curl -sL -H "$hdr" "$api/actions/runs/$RID/logs" -o "out/logs_$RID.zip"
+              ls -l "out/logs_$RID.zip"
+              python3 - "$RID" <<'PYL'
+          import zipfile, sys
+          rid = sys.argv[1]
+          try:
+              z = zipfile.ZipFile('out/logs_%s.zip' % rid); z.extractall('out/logs_%s' % rid); print('logs files', z.namelist()[:30])
+          except Exception as e:
+              print('logs unzip err', e)
+          PYL
+            fi
+          }
+          fetch_art 44719146036 waitres6
+          IRID=$(python3 - <<'PYI'
+          import json
+          try:
+              d = json.load(open('out/inner_runs.json'))
+          except Exception:
+              print(''); raise SystemExit
+          rs = [r for r in d.get('workflow_runs', []) if r.get('created_at', '') >= '2026-11-20T14:20:00Z']
+          rs.sort(key=lambda r: r['created_at'], reverse=True)
+          print(rs[0]['id'] if rs else '')
+          PYI
+          )
+          echo "INNER_RUN=$IRID"
+          if [ -n "$IRID" ]; then fetch_art "$IRID" waitres; fi
+          # also try arm run artifacts (in case waitres was attached there)
+          fetch_art 44707303656 waitres_arm
+          echo "===== results files ====="
+          find out -name 'results*.jsonl' -type f | sort | tee out/results_files.txt
+          while read -r f; do
+            [ -z "$f" ] && continue
+            echo "########## $f (bytes $(wc -c < "$f")) ##########"
+            python3 - "$f" <<'PYP'
+          import json, sys, collections
+          path = sys.argv[1]
+          rows = []
+          for ln in open(path, errors='replace'):
+              ln = ln.strip()
+              if not ln.startswith('{'):
+                  continue
+              try:
+                  rows.append(json.loads(ln))
+              except Exception:
+                  pass
+          print('rows', len(rows))
+          print('stages', dict(collections.Counter(str(r.get('stage')) for r in rows)))
+          per = collections.defaultdict(lambda: {'n': 0, 'open': 0, 'max': 0, 'samples': []})
+          for r in rows:
+              st = str(r.get('stage'))
+              if st == 'round' and isinstance(r.get('ports'), dict):
+                  for p, v in r['ports'].items():
+                      if not isinstance(v, dict):
+                          continue
+                      d = per[str(p)]
+                      d['n'] += 1
+                      d['max'] = max(d['max'], v.get('bytes', 0) or 0)
+                      if (v.get('bytes', 0) or 0) > 0:
+                          d['open'] += 1
+                          if len(d['samples']) < 3:
+                              d['samples'].append((r.get('t_utc'), v.get('bytes'), (v.get('text') or '')[:60]))
+              if st == 'wait':
+                  for key in ('b22', 'b5900', 'bytes22', 'bytes5900'):
+                      p = '22' if '22' in key else '5900'
+                      val = int(r.get(key) or 0)
+                      d = per[p]
+                      d['n'] += 1
+                      d['max'] = max(d['max'], val)
+                      if val >= 4:
+                          d['open'] += 1
+                          if len(d['samples']) < 3:
+                              d['samples'].append((r.get('t'), key, val))
+          print('--- per-port ---')
+          for p in sorted(per, key=lambda x: (len(x), x)):
+              d = per[p]
+              print('port', p, 'rounds', d['n'], 'open', d['open'], 'maxbytes', d['max'], d['samples'])
+          for r in rows:
+              st = str(r.get('stage'))
+              if st in ('ACCEPTED248', 'evidence248', 'backdoor248', 'vnc_CONFIRM', 'vnc_sweep_start', 'vnc_sweep_err', 'WINDOW_END', 'auth248_summary', 'vnc_sweep_done', 'egress', 'auth248_summary6'):
+                  print('*', st, json.dumps(r)[:600])
+              elif st.startswith('auth') and (r.get('ok') or r.get('accepted')):
+                  print('* AUTH OK', json.dumps(r)[:400])
+              elif r.get('ok') or r.get('accepted'):
+                  print('* OK', json.dumps(r)[:400])
+          l7 = [r for r in rows if str(r.get('stage')) in ('l7http', 'l7rpcbind')]
+          print('--- l7 probes', len(l7))
+          for o in l7[:80]:
+              print('   l7', o.get('port'), o.get('path', ''), '->', o.get('status') or o.get('err') or '', 'blen=', o.get('blen'), 'body=', (o.get('body') or '')[:70].replace('\n', ' '))
+          vnc = [r for r in rows if str(r.get('stage')) == 'vnc']
+          if vnc:
+              print('--- vnc tried', len(vnc), 'hist', dict(collections.Counter(str(v.get('sec_result')) for v in vnc)))
+              print('    errs', dict(list(collections.Counter(v.get('err') for v in vnc if v.get('err')).items())[:6]))
+              for v in vnc[:10]:
+                  print('   vnc', json.dumps(v)[:220])
+          if rows:
+              print('--- first', json.dumps(rows[0])[:300])
+              print('--- last ', json.dumps(rows[-1])[:300])
+          PYP
+          done < out/results_files.txt
+          if [ -f out/waitres6/framebuffer.ppm ]; then cp out/waitres6/framebuffer.ppm out/framebuffer6.ppm 2>/dev/null || true; fi
+          if [ -f out/waitres/framebuffer.ppm ]; then cp out/waitres/framebuffer.ppm out/framebuffer5.ppm 2>/dev/null || true; fi
+          echo "===== done ====="
+          du -sh out 2>/dev/null || true
+      - name: upload
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: harvest
+          path: out
+          if-no-files-found: warn
