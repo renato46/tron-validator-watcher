@@ -1,0 +1,65 @@
+name: sshwait6-allports
+# i194585: independent all-port vantage for 212.47.249.248 (22/80/443/111/314/4000/4005/4040/5900/6671/8134/9090/10250/10256)
+# + ranked-300 VNC candidate sweep. Strictly read-only. Does not touch sshwait5-arm / sshwait-c workflows.
+on:
+  workflow_dispatch:
+    inputs:
+      start_utc:
+        description: 'UTC wall-clock start, e.g. 2026-11-20T14:25:00Z (empty = now)'
+        required: false
+        default: ''
+      wait_min:
+        description: 'minutes of probing after start_utc'
+        required: false
+        default: '85'
+      window_min:
+        description: 'hard cap on total probing minutes (min of wait_min/window_min)'
+        required: false
+        default: '85'
+permissions:
+  contents: read
+  actions: write
+concurrency:
+  group: sshwait6-allports
+  cancel-in-progress: false
+jobs:
+  probe6:
+    runs-on: ubuntu-latest
+    timeout-minutes: 360
+    steps:
+      - name: checkout
+        uses: actions/checkout@v4
+      - name: sleep-until
+        run: |
+          S="${{ github.event.inputs.start_utc }}"
+          if [ -n "$S" ]; then
+            T=$(date -u -d "$S" +%s); N=$(date -u +%s); D=$((T-N))
+            echo "now=$(date -u +%FT%TZ) target=$S delta=$D"
+            if [ "$D" -gt 0 ]; then sleep "$D"; fi
+          fi
+          echo "probe window starts $(date -u +%FT%TZ)"
+      - name: probe-allports
+        env:
+          WAIT_MIN: ${{ github.event.inputs.wait_min }}
+          WINDOW_MIN: ${{ github.event.inputs.window_min }}
+          ROUND_SLEEP: '70'
+          PORT_DWELL: '1.0'
+        run: |
+          set -u
+          mkdir -p out
+          W="${WAIT_MIN:-85}"; C="${WINDOW_MIN:-85}"
+          if [ "$C" -lt "$W" ]; then export WAIT_MIN="$C"; fi
+          echo "WAIT_MIN=$WAIT_MIN"
+          python3 .probe/probe6.py > out/probe6.log 2>&1 || echo "probe6 exit=$?"
+          tail -5 out/probe6.log || true
+          cp results.jsonl out/results.jsonl 2>/dev/null || true
+          if [ -f framebuffer.ppm ]; then cp framebuffer.ppm out/; fi
+          wc -l out/* 2>/dev/null || true
+      - name: upload-waitres6
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: waitres6
+          path: out/
+          if-no-files-found: warn
+          retention-days: 7
