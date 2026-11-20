@@ -1,0 +1,263 @@
+name: harvest-final-1605z
+on:
+  workflow_dispatch:
+    inputs:
+      target_utc:
+        description: UTC time to wake at (ISO8601 Z)
+        required: false
+        default: '2026-11-20T16:05:00Z'
+permissions:
+  contents: write
+  actions: read
+jobs:
+  finalharvest:
+    runs-on: ubuntu-latest
+    timeout-minutes: 330
+    steps:
+      - name: sleep-until
+        run: |
+          set -u
+          TARGET="${{ github.event.inputs.target_utc }}"
+          [ -z "$TARGET" ] && TARGET="2026-11-20T16:05:00Z"
+          tgt=$(date -u -d "$TARGET" +%s)
+          echo "start $(date -u +%FT%TZ) target=$TARGET"
+          while [ "$(date -u +%s)" -lt "$tgt" ]; do
+            now=$(date -u +%s); s=$(( tgt - now ))
+            [ "$s" -gt 60 ] && s=60
+            [ "$s" -lt 1 ] && s=1
+            sleep "$s"
+          done
+          echo "woke $(date -u +%FT%TZ)"
+      - name: harvest
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPO: ${{ github.repository }}
+        run: |
+          set -u
+          mkdir -p out/arts
+          api="https://api.github.com/repos/$REPO"
+          hdr="Authorization: Bearer $GH_TOKEN"
+          acc="Accept: application/vnd.github+json"
+
+          get_status () {
+            curl -s -H "$acc" -H "$hdr" "$api/actions/runs/$1" -o "out/arts/run_$1.json" || true
+            python3 - "$1" <<'PYS'
+          import json,sys
+          try:
+              d=json.load(open('out/arts/run_%s.json'%sys.argv[1]))
+          except Exception:
+              print('unknown unknown'); raise SystemExit
+          print(d.get('status'), d.get('conclusion'))
+          PYS
+          }
+
+          fetch_art () {
+            RID="$1"; PREF="$2"
+            mkdir -p "out/arts/$PREF"
+            curl -s -H "$acc" -H "$hdr" "$api/actions/runs/$RID/artifacts" -o "out/arts/arts_$RID.json" || true
+            python3 - "$RID" "$PREF" <<'PYA'
+          import json,sys
+          rid,pref=sys.argv[1],sys.argv[2]
+          try:
+              d=json.load(open('out/arts/arts_%s.json'%rid))
+          except Exception as e:
+              print('arts parse err',e); open('out/arts/url_%s.txt'%rid,'w').write(''); raise SystemExit
+          arts=d.get('artifacts',[]) or []
+          print('run',rid,'artifacts',[(a.get('name'),a.get('size_in_bytes'),a.get('expired')) for a in arts])
+          sel=[a for a in arts if pref in (a.get('name') or '') and not a.get('expired')]
+          open('out/arts/url_%s.txt'%rid,'w').write(sel[0]['archive_download_url'] if sel else '')
+          PYA
+            URL=$(cat "out/arts/url_$RID.txt" 2>/dev/null || true)
+            echo "run=$RID pref=$PREF url_len=${#URL}"
+            if [ -n "$URL" ]; then
+              curl -sL --max-time 180 -H "$acc" -H "$hdr" "$URL" -o "out/arts/$PREF.zip" || true
+              ls -l "out/arts/$PREF.zip" || true
+              python3 - "$PREF" <<'PYZ'
+          import zipfile,sys
+          p=sys.argv[1]
+          try:
+              z=zipfile.ZipFile('out/arts/%s.zip'%p); z.extractall('out/%s'%p); print('extracted',z.namelist()[:40])
+          except Exception as e:
+              print('unzip err',e)
+          PYZ
+            else
+              echo "no $PREF artifact on run $RID -- trying logs"
+              curl -sL --max-time 180 -H "$hdr" "$api/actions/runs/$RID/logs" -o "out/arts/logs_$RID.zip" || true
+              ls -l "out/arts/logs_$RID.zip" || true
+              python3 - "$RID" <<'PYL'
+          import zipfile,sys
+          rid=sys.argv[1]
+          try:
+              z=zipfile.ZipFile('out/arts/logs_%s.zip'%rid)
+              z.extractall('out/logs_%s'%rid)
+              n=0
+              with open('out/logs_%s/_extracted.jsonl'%rid,'w') as o:
+                  for name in z.namelist():
+                      try:
+                          data=z.read(name).decode('utf-8',errors='replace')
+                      except Exception:
+                          continue
+                      for ln in data.splitlines():
+                          i=ln.find('RESULT {')
+                          if i>=0:
+                              o.write(ln[i+7:].strip()+'\n'); n+=1
+              print('logs',z.namelist()[:40],'extracted',n)
+          except Exception as e:
+              print('logs unzip err',e)
+          PYL
+            fi
+          }
+
+          HSTATUS=$(get_status 44736026951)
+          echo "harvest run 44736026951 = [$HSTATUS]"
+          case "$HSTATUS" in
+            completed*) ;;
+            *)
+              for i in $(seq 1 60); do
+                sleep 30
+                HSTATUS=$(get_status 44736026951)
+                echo "poll $i harvest=[$HSTATUS]"
+                case "$HSTATUS" in completed*) break;; esac
+              done
+              ;;
+          esac
+          echo "final harvest status [$HSTATUS]" | tee out/arts/harvest_status.txt
+
+          fetch_art 44736026951 harvest
+          if [ ! -s out/arts/harvest.zip ]; then
+            echo "HARVEST_ARTIFACT_MISSING -> fallback to waitres6/waitres"
+            fetch_art 44719146036 waitres6
+            curl -s -H "$acc" -H "$hdr" "$api/actions/workflows/sshwait-c.yml/runs?branch=sshwait-20261120&per_page=10" -o out/arts/inner_runs.json || true
+            IRID=$(python3 - <<'PYI'
+          import json
+          try:
+              d=json.load(open('out/arts/inner_runs.json'))
+          except Exception:
+              print(''); raise SystemExit
+          rs=[r for r in d.get('workflow_runs',[]) if r.get('created_at','')>='2026-11-20T14:20:00Z']
+          rs.sort(key=lambda r:r['created_at'],reverse=True)
+          print(rs[0]['id'] if rs else '')
+          PYI
+            )
+            echo "INNER_RUN=$IRID"
+            if [ -n "$IRID" ]; then fetch_art "$IRID" waitres; fi
+            fetch_art 44707303656 waitres_arm
+          fi
+          date -u +%FT%TZ > out/harvested_at.txt
+          echo "===== candidates ====="; find out -name '*.jsonl' -type f | sort | tee out/results_files.txt
+          wc -c $(cat out/results_files.txt) 2>/dev/null || true
+
+          python3 - <<'PYPARSE'
+          import json,glob,os,collections,sys
+          files=[l.strip() for l in open('out/results_files.txt') if l.strip()]
+          rows=[]
+          for f in files:
+              n=0
+              for ln in open(f,errors='replace'):
+                  ln=ln.strip()
+                  if not ln.startswith('{'): continue
+                  try: rows.append(json.loads(ln)); n+=1
+                  except Exception: pass
+              print('file',f,'rows',n)
+          per=collections.defaultdict(lambda:{'rounds':0,'bytes_pos':0,'max':0,'samples':[]})
+          auths=[]; accepted=[]; vncs=[]; vncfb=[]; l7=[]; key_stages=[]
+          for r in rows:
+              st=str(r.get('stage'))
+              if st=='round' and isinstance(r.get('ports'),dict):
+                  for p,v in r['ports'].items():
+                      if not isinstance(v,dict): continue
+                      d=per[str(p)]; d['rounds']+=1
+                      b=int(v.get('bytes',0) or 0)
+                      d['max']=max(d['max'],b)
+                      if b>0:
+                          d['bytes_pos']+=1
+                          if len(d['samples'])<4: d['samples'].append([r.get('t_utc'),b,(v.get('text') or '')[:60]])
+              elif st=='wait':
+                  for key in ('b22','b5900','bytes22','bytes5900'):
+                      if key in r:
+                          p='22' if '22' in key else '5900'
+                          val=int(r.get(key) or 0)
+                          d=per[p]; d['rounds']+=1; d['max']=max(d['max'],val)
+                          if val>=4:
+                              d['bytes_pos']+=1
+                              if len(d['samples'])<4: d['samples'].append([r.get('t'),key,val])
+              elif st=='l7http' or st=='l7rpcbind':
+                  l7.append({'port':r.get('port'),'path':r.get('path',''),'status':r.get('status'),'err':str(r.get('err') or '')[:60],'blen':r.get('blen'),'body':(r.get('body') or '')[:120]})
+              elif st=='vnc':
+                  vncs.append({'pw_len':r.get('pw_len'),'auth_ok':r.get('auth_ok'),'sec_result':r.get('sec_result'),'err':str(r.get('err') or '')[:80]})
+              elif st=='vnc_fb':
+                  vncfb.append({'w':r.get('w'),'h':r.get('h')})
+              if st and st.startswith('auth'):
+                  rec={'stage':st,'user':r.get('user'),'ok':r.get('ok'),'accepted':r.get('accepted'),'nkeys':len(r.get('keys') or []),'err':str(r.get('err') or '')[:60]}
+                  auths.append(rec)
+                  if r.get('ok') or r.get('accepted'): accepted.append(rec)
+              if st in ('ACCEPTED248','evidence248','backdoor248','WINDOW_END','auth248_summary','auth248_summary6','vnc_sweep_done','vnc_sweep_start','vnc_sweep_err','egress','probe6_start','moved6','l7_err'):
+                  key_stages.append(json.loads(json.dumps(r)) )
+          res={
+            'generated_at':__import__('time').strftime('%Y-%m-%dT%H:%M:%SZ',__import__('time').gmtime()),
+            'harvested_at':open('out/harvested_at.txt').read().strip() if os.path.exists('out/harvested_at.txt') else None,
+            'harvest_status':open('out/arts/harvest_status.txt').read().strip() if os.path.exists('out/arts/harvest_status.txt') else None,
+            'files':files,'rows':len(rows),
+            'stages':dict(collections.Counter(str(r.get('stage')) for r in rows)),
+            'per_port':{p:{'rounds':d['rounds'],'bytes_pos':d['bytes_pos'],'maxbytes':d['max'],'samples':d['samples']} for p,d in per.items()},
+            'auth_accepted':accepted,'auth_count':len(auths),
+            'auth_stages':dict(collections.Counter(a['stage'] for a in auths)),
+            'vnc_tried':len(vncs),'vnc_hist':dict(collections.Counter(str(v.get('auth_ok')) for v in vncs)),'vnc_ok':[v for v in vncs if v.get('auth_ok')],'vnc_first':vncs[:12],'vnc_fb':vncfb,
+            'l7':l7[:120],
+            'key_stages':key_stages[:60],
+            'first_row':rows[0] if rows else None,
+            'last_row':rows[-1] if rows else None,
+          }
+          online=[p for p,d in per.items() if d['max']>=4]
+          if accepted: verdict='A_ACCEPTED'
+          elif vncfb or any(v.get('auth_ok') for v in vncs): verdict='B_VNC_OK'
+          elif online: verdict='ONLINE_NOTHING_ACCEPTED'
+          else: verdict='C_OFFLINE_FINAL'
+          res['online_ports']=online
+          res['verdict']=verdict
+          json.dump(res,open('out/result.json','w'),indent=1,default=str)
+          print('VERDICT',verdict,'online',online,'rows',len(rows),'accepted',len(accepted))
+          PYPARSE
+          python3 -c "import json;d=json.load(open('out/result.json'));print(json.dumps({k:d[k] for k in ('verdict','online_ports','rows','auth_count','vnc_tried','per_port') if k in d},indent=1)[:3000])"
+          echo "===== done ====="
+      - name: upload
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: harvest-final
+          path: out
+          if-no-files-found: warn
+      - name: publish
+        if: always()
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPO: ${{ github.repository }}
+          BRANCH: harvest-20261120
+        run: |
+          set -u
+          [ -f out/result.json ] || echo '{"verdict":"NO_OUTPUT"}' > out/result.json
+          python3 - <<'PYPUB'
+          import base64,json,os,time,urllib.request,urllib.error
+          tok=os.environ['GH_TOKEN']; repo=os.environ['REPO']; br=os.environ['BRANCH']
+          data=open('out/result.json','rb').read()[:400000]
+          api='https://api.github.com/repos/%s/contents/result.json'%repo
+          def req(url,method='GET',body=None):
+              r=urllib.request.Request(url,method=method,data=body,headers={'Authorization':'Bearer '+tok,'Accept':'application/vnd.github+json','Content-Type':'application/json','User-Agent':'kiln-harvest-final'})
+              with urllib.request.urlopen(r,timeout=40) as resp: return json.loads(resp.read().decode() or '{}')
+          sha=None
+          try:
+              cur=req(api+'?ref='+br)
+              if isinstance(cur,dict): sha=cur.get('sha')
+              print('existing sha',sha)
+          except Exception as e:
+              print('get sha skip',e)
+          payload={'message':'harvest-final %s'%time.strftime('%Y-%m-%dT%H:%MZ',time.gmtime()),'content':base64.b64encode(data).decode(),'branch':br}
+          if sha: payload['sha']=sha
+          for i in range(4):
+              try:
+                  out=req(api,'PUT',json.dumps(payload).encode())
+                  print('PUT ok commit',(out.get('commit') or {}).get('sha'))
+                  break
+              except Exception as e:
+                  print('PUT err',e); time.sleep(6)
+          PYPUB
