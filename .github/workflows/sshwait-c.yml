@@ -1,0 +1,42 @@
+name: sshwait-c
+on:
+  push:
+    branches: [ 'sshwait-20261120' ]
+  workflow_dispatch:
+    inputs:
+      wait_min:
+        description: 'minutes to self-wait for 212.47.249.248 22/5900'
+        required: false
+        default: '85'
+permissions:
+  contents: read
+jobs:
+  probe:
+    runs-on: ubuntu-latest
+    timeout-minutes: 115
+    steps:
+      - uses: actions/checkout@v4
+      - name: setup
+        run: |
+          ssh -V
+          openssl version
+          mkdir -p .probe/keys
+          base64 -d .probe/keys_payload.b64 | tar xz -C .probe/keys
+          chmod 600 .probe/keys/* || true
+          echo KEYFILES=$(ls .probe/keys | wc -l)
+          echo ATT=$(python3 -c "import json;a=json.load(open('.probe/attempts.json'));print(len(a['att248']),len(a['att51']))")
+      - name: probe
+        env:
+          WAIT_MIN: ${{ github.event.inputs.wait_min || '85' }}
+          ROUND_SLEEP: '75'
+        run: |
+          python3 .probe/probe2.py 2>&1 | tee probe2.log
+      - name: upload
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: waitres
+          path: |
+            results.jsonl
+            probe2.log
+          retention-days: 7
